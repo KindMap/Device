@@ -1,1 +1,104 @@
-{"cells":[{"cell_type":"code","source":["# main.py\n","\n","import time\n","import threading\n","import os\n","import gpio_handler\n","import audio_handler\n","import gps_handler\n","import api_client\n","\n","# --- 상태 변수 ---\n","# 현재 경로 탐색이 진행 중인지 여부를 나타내는 플래그\n","is_processing = False\n","\n","# --- 임시 파일 및 안내 음성 경로 ---\n","# (사전에 'sounds' 폴더와 안내 파일들이 준비되어 있어야 함)\n","BASE_DIR = os.path.dirname(os.path.abspath(__file__))\n","SOUNDS_DIR = os.path.join(BASE_DIR, \"sounds\")\n","\n","PROMPT_START = os.path.join(SOUNDS_DIR, \"prompt_start.mp3\")\n","PROMPT_ORIGIN = os.path.join(SOUNDS_DIR, \"prompt_origin.mp3\")\n","PROMPT_DEST = os.path.join(SOUNDS_DIR, \"prompt_dest.mp3\")\n","PROMPT_WAIT = os.path.join(SOUNDS_DIR, \"prompt_wait.mp3\")\n","PROMPT_SUCCESS = os.path.join(SOUNDS_DIR, \"prompt_success.mp3\")\n","PROMPT_ERROR = os.path.join(SOUNDS_DIR, \"prompt_error.mp3\")\n","\n","RECORD_ORIGIN_WAV = os.path.join(BASE_DIR, \"temp_origin.wav\")\n","RECORD_DEST_WAV = os.path.join(BASE_DIR, \"temp_dest.wav\")\n","\n","def main_navigation_flow():\n","    \"\"\"\n","    버튼이 눌린 후 실행될 메인 로직.\n","    (별도 스레드에서 동작)\n","    \"\"\"\n","    global is_processing\n","    is_processing = True  # 처리 시작 플래그 설정\n","    print(\"\\n--- 새로운 경로 탐색 시작 ---\")\n","\n","    try:\n","        # 1. 출발지 안내 및 5초간 녹음\n","        audio_handler.play_sound(PROMPT_ORIGIN)\n","        audio_handler.record_audio(RECORD_ORIGIN_WAV, duration=5)\n","\n","        # 2. 도착지 안내 및 5초간 녹음\n","        audio_handler.play_sound(PROMPT_DEST)\n","        audio_handler.record_audio(RECORD_DEST_WAV, duration=5)\n","\n","        # 3. 대기 안내\n","        audio_handler.play_sound(PROMPT_WAIT)\n","\n","        # 4. GPS 위치 수집\n","        # (실제로는 이 작업이 가장 오래 걸릴 수 있음)\n","        location = gps_handler.get_current_location(timeout=60) # GPS 타임아웃 60초\n","\n","        if location is None:\n","            # Exception을 발생시켜서 오류 처리 로직으로 넘김\n","            raise Exception(\"GPS 위치를 수신할 수 없음.\")\n","\n","        # 5. 서버에 요청 (STT -> 경로탐색 -> TTS)\n","        result_audio_file = api_client.request_navigation(\n","            RECORD_ORIGIN_WAV,\n","            RECORD_DEST_WAV,\n","            location\n","        )\n","\n","        if result_audio_file:\n","            # 6. 성공 안내 및 최종 경로 재생\n","            print(\"[Main] 경로 탐색 성공. 안내를 시작함.\")\n","            # audio_handler.play_sound(PROMPT_SUCCESS) # 성공음이 너무 길면 생략 가능\n","            audio_handler.play_sound(result_audio_file)\n","        else:\n","            raise Exception(\"서버로부터 경로를 받아오지 못함.\")\n","\n","    except Exception as e:\n","        # 7. 오류 처리\n","        print(f\"[Main] 오류 발생: {e}\")\n","        audio_handler.play_sound(PROMPT_ERROR) # 오류 안내 음성 재생\n","\n","    finally:\n","        # 8. 임시 파일 삭제 및 상태 초기화\n","        if os.path.exists(RECORD_ORIGIN_WAV):\n","            os.remove(RECORD_ORIGIN_WAV)\n","        if os.path.exists(RECORD_DEST_WAV):\n","            os.remove(RECORD_DEST_WAV)\n","\n","        print(\"--- 경로 탐색 종료 (다음 입력을 대기함) ---\")\n","        is_processing = False # 처리 완료 플래그 해제\n","\n","def on_button_press(channel):\n","    \"\"\"\n","    GPIO 버튼 콜백 함수 (이 함수는 최대한 빨리 종료되어야 함)\n","    \"\"\"\n","    global is_processing\n","    if is_processing:\n","        print(\"[GPIO] 이미 처리 중임. 버튼 입력을 무시함.\")\n","        return\n","\n","    # 실제 작업은 별도의 스레드에서 실행\n","    # (GPIO 콜백 함수 내에서 긴 작업을 하면 시스템이 불안정해질 수 있음)\n","    threading.Thread(target=main_navigation_flow).start()\n","\n","def main():\n","    \"\"\"\n","    메인 프로그램 실행 함수\n","    \"\"\"\n","    print(\"--- 교통약자 음성 안내 시스템 시작 ---\")\n","    print(\"--- (Ctrl+C를 눌러 종료) ---\")\n","\n","    # 안내 음성 파일 존재 여부 확인\n","    if not os.path.exists(SOUNDS_DIR):\n","        print(f\"오류: 'sounds' 폴더를 찾을 수 없음!\")\n","        print(f\"    '{SOUNDS_DIR}' 폴더를 생성하고 안내 음성 파일들을 넣어주세요.\")\n","        return\n","\n","    try:\n","        # 1. GPIO 버튼 설정 (콜백 함수로 on_button_press 등록)\n","        gpio_handler.setup_button(on_button_press)\n","\n","        # 2. 시스템 시작음 재생\n","        audio_handler.play_sound(PROMPT_START)\n","\n","        # 3. 메인 스레드는 프로그램이 종료되지 않도록 무한 대기\n","        while True:\n","            time.sleep(1) # CPU 사용을 줄이기 위해 1초 대기\n","\n","    except KeyboardInterrupt:\n","        print(\"\\n[Main] 사용자에 의해 프로그램 종료 중...\")\n","\n","    finally:\n","        # 4. 프로그램 종료 시 GPIO 리소스 정리\n","        gpio_handler.cleanup()\n","        print(\"[Main] 프로그램을 종료함.\")\n","\n","if __name__ == \"__main__\":\n","    main()"],"outputs":[],"execution_count":null,"metadata":{"id":"imKfwkq85VFG"}}],"metadata":{"colab":{"provenance":[]},"kernelspec":{"display_name":"Python 3","name":"python3"}},"nbformat":4,"nbformat_minor":0}
+# main.py
+import time
+import os
+import RPi.GPIO as GPIO
+import audio_handler
+import gps_handler
+import websocket_client
+import tts_handler
+import config
+
+# 녹음 파일 저장 경로
+ORIGIN_WAV = "origin.wav"
+DEST_WAV = "destination.wav"
+
+def main_process():
+    """버튼이 눌렸을 때 실행되는 전체 시나리오"""
+    print("\n[Start] 경로 안내 프로세스 시작")
+    
+    # 1. 출발지 녹음
+    print("[Step 1] 출발지 입력")
+    if os.path.exists("sounds/prompt_origin.mp3"):
+        audio_handler.play_sound("sounds/prompt_origin.mp3") 
+    else:
+        print("안내 음성 파일 없음 (건너뜀)")
+    
+    # 4초간 녹음
+    audio_handler.record_audio(ORIGIN_WAV, duration=4)
+    
+    # 2. 도착지 녹음
+    print("[Step 2] 도착지 입력")
+    if os.path.exists("sounds/prompt_destination.mp3"):
+        audio_handler.play_sound("sounds/prompt_destination.mp3")
+    
+    audio_handler.record_audio(DEST_WAV, duration=4)
+    
+    # 3. GPS 수신
+    print("[Step 3] GPS 탐색")
+    if os.path.exists("sounds/prompt_wait.mp3"):
+        audio_handler.play_sound("sounds/prompt_wait.mp3")
+    
+    # GPS 안테나가 실내라면 오래 걸릴 수 있음 (타임아웃 60초)
+    gps_data = gps_handler.get_current_location(timeout=60)
+    
+    if not gps_data:
+        print("[Error] GPS 수신 실패")
+        tts_handler.speak_text("위성 신호를 잡을 수 없습니다. 실외로 이동해주세요.")
+        return
+
+    # 4. 서버 전송 및 안내 수신
+    print("[Step 4] 서버 통신")
+    # 녹음 파일과 GPS를 보내고, 안내 멘트(텍스트)를 받아옴
+    guide_text = websocket_client.send_data_and_receive_guide(ORIGIN_WAV, DEST_WAV, gps_data)
+    
+    # 5. 결과 안내 (TTS)
+    if guide_text:
+        print(f"[Result] 안내: {guide_text}")
+        # 받아온 텍스트를 음성으로 읽어줌
+        tts_handler.speak_text(guide_text)
+    else:
+        print("[Error] 서버 응답 없음")
+        tts_handler.speak_text("서버와 연결할 수 없습니다. 다시 시도해주세요.")
+
+def on_button_press(channel):
+    """버튼이 눌렸을 때 호출되는 함수"""
+    # 중복 실행 방지를 위해 잠시 이벤트 감지 중지
+    try:
+        GPIO.remove_event_detect(config.BUTTON_PIN)
+        main_process()
+    except Exception as e:
+        print(f"오류 발생: {e}")
+    finally:
+        # 프로세스가 끝나면 다시 버튼 감지 시작
+        setup_gpio()
+
+def setup_gpio():
+    """GPIO 초기화 및 이벤트 설정"""
+    GPIO.add_event_detect(config.BUTTON_PIN, GPIO.FALLING, 
+                          callback=on_button_press, bouncetime=1000)
+
+def main():
+    print("--- KindMap 디바이스 대기 중 ---")
+    print(f"버튼(GPIO {config.BUTTON_PIN})을 눌러주세요.")
+    
+    # 시작음 재생
+    if os.path.exists("sounds/prompt_start.mp3"):
+        audio_handler.play_sound("sounds/prompt_start.mp3")
+    
+    # GPIO 설정
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(config.BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    
+    setup_gpio()
+    
+    try:
+        # 프로그램이 종료되지 않도록 무한 대기
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n종료합니다.")
+    finally:
+        GPIO.cleanup()
+
+if __name__ == "__main__":
+    main()
