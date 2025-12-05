@@ -19,3 +19,5 @@ SOUND_ORIGIN = SOUNDS_DIR + "prompt_origin.mp3"
 SOUND_DESTINATION = SOUNDS_DIR + "prompt_destination.mp3"
 SOUND_WAIT = SOUNDS_DIR + "prompt_wait.mp3"
 SOUND_ERROR = SOUNDS_DIR + "prompt_error.mp3"
+
+SERVER_WS_URL = "wss://kindmap-for-you.cloud/api/v1/ws/temp_device_123"
