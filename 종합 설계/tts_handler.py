@@ -5,20 +5,20 @@ import audio_handler
 
 def speak_text(text):
     """
-    텍스트를 입력받아 구글 TTS로 음성 파일(mp3)을 만들고 재생함.
+    서버로부터 받은 텍스트를 음성 파일(mp3)로 변환하고 재생함.
     """
     try:
         print(f"[TTS] 음성 변환 중: '{text}'")
         
-        # 1. 텍스트를 mp3 파일로 변환 (한국어)
+        # 1. 구글 TTS로 텍스트를 음성 파일로 저장 (한국어)
         tts = gTTS(text=text, lang='ko')
         filename = "guidance.mp3"
         tts.save(filename)
         
-        # 2. 저장된 파일 재생 (기존 audio_handler의 재생 기능 활용)
+        # 2. 저장된 파일 재생 (기존 audio_handler 활용)
         audio_handler.play_sound(filename)
         
-        # 3. 재생 후 파일 삭제 (깔끔하게 정리)
+        # 3. 재생 후 파일 삭제 (선택 사항)
         if os.path.exists(filename):
             os.remove(filename)
             
